@@ -65,12 +65,12 @@ jobs:
         run: node -p "require('./package.json').version"
 
       - name: Build CN edition
-        if: contains(inputs.editions, 'cn')
+        if: inputs.editions == 'cn' || inputs.editions == 'both'
         shell: bash
         run: npm run build:win:cn -- --publish never
 
       - name: Build Global edition
-        if: contains(inputs.editions, 'global')
+        if: inputs.editions == 'global' || inputs.editions == 'both'
         shell: bash
         run: npm run build:win:global -- --publish never
 
@@ -113,12 +113,12 @@ jobs:
         run: node -p "require('./package.json').version"
 
       - name: Build CN edition
-        if: contains(inputs.editions, 'cn')
+        if: inputs.editions == 'cn' || inputs.editions == 'both'
         shell: bash
         run: npm run build:linux:cn -- --publish never
 
       - name: Build Global edition
-        if: contains(inputs.editions, 'global')
+        if: inputs.editions == 'global' || inputs.editions == 'both'
         shell: bash
         run: npm run build:linux:global -- --publish never
 

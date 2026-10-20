@@ -1,0 +1,136 @@
+name: Build Latest
+
+# Fork-only helper: build installable packages from the current main branch.
+# The upstream release.yml is gated to chaterm/Chaterm and only runs on v*.*.* tags,
+# so it cannot be used on a fork. This workflow reuses the same, known-good build steps.
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: 'Target platform(s) to build'
+        type: choice
+        default: 'windows'
+        options:
+          - windows
+          - linux
+          - windows+linux
+      editions:
+        description: 'Edition(s) to build'
+        type: choice
+        default: 'both'
+        options:
+          - cn
+          - global
+          - both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-latest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Build (Windows x64)
+    if: github.event_name == 'workflow_dispatch' && contains(inputs.targets, 'windows')
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Enable long paths (Windows)
+        run: git config --system core.longpaths true
+
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Use Node.js 22.x
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6.0.0
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Fix package-lock.json
+        run: node scripts/patch-package-lock.js
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline
+
+      - name: Install Electron binary
+        shell: pwsh
+        run: node node_modules/electron/install.js
+
+      - name: Show version
+        shell: bash
+        run: node -p "require('./package.json').version"
+
+      - name: Build CN edition
+        if: contains(inputs.editions, 'cn')
+        shell: bash
+        run: npm run build:win:cn -- --publish never
+
+      - name: Build Global edition
+        if: contains(inputs.editions, 'global')
+        shell: bash
+        run: npm run build:win:global -- --publish never
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: chaterm-windows-x64
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            dist/cn/*setup-*.exe
+            dist/cn/*.blockmap
+            dist/global/*setup-*.exe
+            dist/global/*.blockmap
+
+  linux:
+    name: Build (Linux x64)
+    if: github.event_name == 'workflow_dispatch' && contains(inputs.targets, 'linux')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Use Node.js 22.x
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6.0.0
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Fix package-lock.json
+        run: node scripts/patch-package-lock.js
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline
+
+      - name: Show version
+        shell: bash
+        run: node -p "require('./package.json').version"
+
+      - name: Build CN edition
+        if: contains(inputs.editions, 'cn')
+        shell: bash
+        run: npm run build:linux:cn -- --publish never
+
+      - name: Build Global edition
+        if: contains(inputs.editions, 'global')
+        shell: bash
+        run: npm run build:linux:global -- --publish never
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: chaterm-linux-x64
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            dist/cn/*.AppImage
+            dist/cn/*.deb
+            dist/global/*.AppImage
+            dist/global/*.deb

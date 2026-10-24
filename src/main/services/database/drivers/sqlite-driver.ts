@@ -2,11 +2,29 @@
 //  This source code is licensed under the GPL-3.0
 
 import { Worker } from 'worker_threads'
+import { existsSync } from 'fs'
+import { sep } from 'path'
 import type { ConnectionTestResult, DatabaseDriverAdapter, QueryResult, ResolvedDbCredential } from '../types'
 
 const logger = createLogger('db')
 
 const SQLITE_TIMEOUT_MS = 5_000
+
+/**
+ * `new Worker(source, { eval: true })` resolves `require()` against the process
+ * working directory instead of this bundle, so `require('better-sqlite3')`
+ * inside the worker fails in a packaged app ("Require stack:
+ * ...\Program Files\Chaterm\[worker eval]"). Resolve the module here — where
+ * asar-aware module paths are correct — and hand the absolute entry to the
+ * worker via `workerData`.
+ */
+function resolveBetterSqlite3Entry(): string {
+  const resolved = require.resolve('better-sqlite3')
+  // electron-builder unpacks native packages next to app.asar; prefer that copy
+  // so the worker never needs asar support for the package files.
+  const unpacked = resolved.replace(`app.asar${sep}`, `app.asar.unpacked${sep}`)
+  return unpacked !== resolved && existsSync(unpacked) ? unpacked : resolved
+}
 
 interface SqliteWorkerResponse {
   id: number
@@ -36,7 +54,7 @@ interface SqliteColumnRow {
 }
 
 const SQLITE_WORKER_SOURCE = `
-const { parentPort } = require('worker_threads')
+const { parentPort, workerData } = require('worker_threads')
 let db = null
 
 function callWithParams(stmt, params, mode) {
@@ -84,7 +102,7 @@ parentPort.on('message', (message) => {
     .then(() => {
       if (method === 'open') {
         closeDb()
-        const Database = require('better-sqlite3')
+        const Database = require(workerData.betterSqlite3Entry)
         const input = args[0] || {}
         db = new Database(input.filePath, {
           readonly: Boolean(input.readonly),
@@ -123,7 +141,10 @@ class SqliteWorkerConnection {
   private closed = false
 
   constructor() {
-    this.worker = new Worker(SQLITE_WORKER_SOURCE, { eval: true })
+    this.worker = new Worker(SQLITE_WORKER_SOURCE, {
+      eval: true,
+      workerData: { betterSqlite3Entry: resolveBetterSqlite3Entry() }
+    })
     this.worker.on('message', (response: SqliteWorkerResponse) => this.handleResponse(response))
     this.worker.on('error', (error) => this.rejectAll(error instanceof Error ? error : new Error(String(error))))
     this.worker.on('exit', (code) => {

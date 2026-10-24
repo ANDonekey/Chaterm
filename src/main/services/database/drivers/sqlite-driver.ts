@@ -2,29 +2,11 @@
 //  This source code is licensed under the GPL-3.0
 
 import { Worker } from 'worker_threads'
-import { existsSync } from 'fs'
-import { sep } from 'path'
 import type { ConnectionTestResult, DatabaseDriverAdapter, QueryResult, ResolvedDbCredential } from '../types'
 
 const logger = createLogger('db')
 
 const SQLITE_TIMEOUT_MS = 5_000
-
-/**
- * `new Worker(source, { eval: true })` resolves `require()` against the process
- * working directory instead of this bundle, so `require('better-sqlite3')`
- * inside the worker fails in a packaged app ("Require stack:
- * ...\Program Files\Chaterm\[worker eval]"). Resolve the module here — where
- * asar-aware module paths are correct — and hand the absolute entry to the
- * worker via `workerData`.
- */
-function resolveBetterSqlite3Entry(): string {
-  const resolved = require.resolve('better-sqlite3')
-  // electron-builder unpacks native packages next to app.asar; prefer that copy
-  // so the worker never needs asar support for the package files.
-  const unpacked = resolved.replace(`app.asar${sep}`, `app.asar.unpacked${sep}`)
-  return unpacked !== resolved && existsSync(unpacked) ? unpacked : resolved
-}
 
 interface SqliteWorkerResponse {
   id: number
@@ -55,7 +37,30 @@ interface SqliteColumnRow {
 
 const SQLITE_WORKER_SOURCE = `
 const { parentPort, workerData } = require('worker_threads')
+const path = require('path')
 let db = null
+
+// An eval worker resolves bare module names against the process working
+// directory, not against this bundle, so 'better-sqlite3' alone only works
+// when the cwd happens to contain node_modules (dev, tests). In a packaged app
+// the dependency lives in app.asar and electron-builder copies native packages
+// to app.asar.unpacked, so try that explicit path first.
+function loadBetterSqlite3() {
+  const candidates = []
+  if (workerData.resourcesPath) {
+    candidates.push(path.join(workerData.resourcesPath, 'app.asar.unpacked', 'node_modules', 'better-sqlite3'))
+  }
+  candidates.push('better-sqlite3')
+  let lastError = null
+  for (const candidate of candidates) {
+    try {
+      return require(candidate)
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError || new Error('cannot load better-sqlite3')
+}
 
 function callWithParams(stmt, params, mode) {
   if (!Array.isArray(params) || params.length === 0) {
@@ -102,7 +107,7 @@ parentPort.on('message', (message) => {
     .then(() => {
       if (method === 'open') {
         closeDb()
-        const Database = require(workerData.betterSqlite3Entry)
+        const Database = loadBetterSqlite3()
         const input = args[0] || {}
         db = new Database(input.filePath, {
           readonly: Boolean(input.readonly),
@@ -143,7 +148,7 @@ class SqliteWorkerConnection {
   constructor() {
     this.worker = new Worker(SQLITE_WORKER_SOURCE, {
       eval: true,
-      workerData: { betterSqlite3Entry: resolveBetterSqlite3Entry() }
+      workerData: { resourcesPath: process.resourcesPath }
     })
     this.worker.on('message', (response: SqliteWorkerResponse) => this.handleResponse(response))
     this.worker.on('error', (error) => this.rejectAll(error instanceof Error ? error : new Error(String(error))))

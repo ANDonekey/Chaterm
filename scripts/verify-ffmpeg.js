@@ -7,7 +7,8 @@ if (process.platform !== 'win32') {
   process.exit(0)
 }
 
-const KNOWN_HASH = '31F21B81D743DCD2DC16190B246854E6B86211D2DC2F26B84B96E02DFA43D798'
+// Electron 45.2.1 (win32-x64) — matches CI-verified hash after the 43.4.1 -> 45.2.1 upgrade
+const KNOWN_HASH = 'F035E9879A6D43519467A8D761D2EA643AC63ED89D448EAB9AAC86BC38C4809F'
 
 const ffmpegPath = path.join(__dirname, '../node_modules/electron/dist/ffmpeg.dll')
 
